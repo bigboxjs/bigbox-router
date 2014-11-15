@@ -1,0 +1,10 @@
+{
+  "name": "bigbox-router",
+  "version": "0.0.1",
+  "main": "index.js",
+  "description": "bigbox-router是bigbox中在浏览器端进行路由和页面管理的程序",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bigboxjs/bigbox-router"
+  }
+}
