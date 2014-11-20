@@ -6,10 +6,17 @@ define(function(require, exports, module) {
 
 	var $ = require("jquery");
 	var History = require("./history");
-	var Cookie = require("./cookie");
 	var Context = require("./context");
 
-	var single;
+	/**
+	 * 事件对象
+	 * @param type
+	 * @constructor
+	 */
+	var Event = function(type) {
+		this.type = type;
+		this.data = {};
+	};
 
 	/**
 	 * Bigbox类
@@ -18,12 +25,15 @@ define(function(require, exports, module) {
 	var Bigbox = function(config) {
 		this._config = config;
 
+		// 记录当前使用的样式信息
+		this._cssRes = {};
+
+		// 事件监听器
+		this._listeners = {};
+
 		// 读取当前页面的路径信息
 		this.contexts = {};
 		this._setBoxes(window.boxesID);
-
-		// 记录当前使用的样式信息
-		this._cssRes = {};
 
 		// 服务器处理程序列表
 		this._uses = false;
@@ -45,6 +55,48 @@ define(function(require, exports, module) {
 		this.bindForms();
 
 		History.onpopstate = this.onHistoryPopState.bind(this);
+	};
+
+	/**
+	 * 监听事件
+	 * @param name
+	 * @param listener
+	 */
+	Bigbox.prototype.on = function(name, listener) {
+		var listeners = this._listeners[name] || (this._listeners[name] = []);
+		listeners.push(listener);
+	};
+
+	/**
+	 * 取消事件监听
+	 * @param name
+	 * @param listener
+	 */
+	Bigbox.prototype.off = function(name, listener) {
+		var listeners = this._listeners[name];
+		if (!listeners) return;
+
+		// 监听事件
+		var index = listeners.indexOf(listener);
+		if (index != -1) this._listeners[name] = listeners.splice(index, 1);
+	};
+
+	/**
+	 * 触发事件
+	 * @param event
+	 * @returns {boolean}
+	 */
+	Bigbox.prototype.fire = function(event) {
+		var name = event.type;
+		var listeners = this._listeners[name];
+		if (!listeners) return;
+
+		// 循环每个监听器，并执行之
+		for (var i = 0, il = listeners.length; i < il; i++) {
+			var listener = listeners[i];
+			if (listener(event) === false) return false;
+		}
+		return true;
 	};
 
 	/**
@@ -176,7 +228,7 @@ define(function(require, exports, module) {
 		}).bind(this);
 
 		// 判断是否有拦截程序要进行预处理
-		var uses = this._uses;
+		/*var uses = this._uses;
 		if (uses) {
 			for (var i = 0, il = uses.length; i < il; i++) {
 				var use = uses[i];
@@ -196,14 +248,29 @@ define(function(require, exports, module) {
 					return;
 				}
 			}
+		}*/
+
+		var event = new Event("beforerequest");
+		event.data = {
+			url: originalUrl,
+			data: query,
+			callback: callback
+		};
+		if (this.fire(event) === false) {
+			// 如果之前没有拦截到，那就调用ajax请求服务器
+			$.ajax({
+				url: originalUrl,
+				data: query,
+				dataType: "json"
+			}).done(callback);
 		}
 
 		// 如果之前没有拦截到，那就调用ajax请求服务器
-		$.ajax({
+		/*$.ajax({
 			url: originalUrl,
 			data: query,
 			dataType: "json"
-		}).done(callback);
+		}).done(callback);*/
 	};
 
 	/**
@@ -335,6 +402,8 @@ define(function(require, exports, module) {
 			deal: deal
 		});
 	};
+
+	var single;
 
 	/**
 	 * 启动代码
