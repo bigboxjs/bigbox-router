@@ -256,7 +256,7 @@ define(function(require, exports, module) {
 			data: query,
 			callback: callback
 		};
-		if (this.fire(event) === false) {
+		if (this.fire(event) !== false) {
 			// 如果之前没有拦截到，那就调用ajax请求服务器
 			$.ajax({
 				url: originalUrl,
@@ -323,7 +323,7 @@ define(function(require, exports, module) {
 		this.addResource(content.head.resources, nowBoxesID);
 
 		// 更换内容
-		$("#BigBoxCtr" + changeIndex).html(content.body.content);
+		$("#BigboxCtr" + changeIndex).html(content.body.content);
 
 		// 增加内容部分的资源
 		this.addResource(content.body.resources, nowBoxesID);
