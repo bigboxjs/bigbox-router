@@ -4,46 +4,31 @@
 
 define(function(require, exports, module) {
 
-	function Context(boxID, bigbox) {
-		this._bigbox = bigbox;
-		this.setUrl(boxID);
+	var querystring = require("./util/querystring");
 
-		this.history = {
-			pushState: this.pushState.bind(this)
-		};
+	function Context(boxID) {
+		// 设置基本信息
+		this.id = boxID;
+		Context.parse(boxID, this);
+
+		// 可能会被用到的事件处理方法
+		this.onunload;	// context销毁事件
+		this.onparamschange;  // box参数变更事件
 	}
 
 	/**
-	 * 跳转到指定的页面
+	 * 从一个boxID中解析信息
+	 * @param boxID
+	 * @returns {{}}
 	 */
-	Context.prototype.goto = function (url) {
-		this._bigbox.goto(url);
-	};
+	Context.parse = function(boxID, obj) {
+		obj = obj || {};
 
-	/**
-	 * 设置当前的状态
-	 */
-	Context.prototype.pushState = function (state, title, url) {
-		document.title = title || "";
+		var ids = boxID.split("?");
+		obj.pathname = ids.shift();
+		obj.params = querystring.parse(ids.join("?"));
 
-		// 修改bigbox中的记录
-		var originUrl = this.location.href;
-		this.setUrl(url);
-		this._bigbox.reloadContext(originUrl);
-
-	};
-
-	/**
-	 * 设置当前的状态
-	 */
-	Context.prototype.setUrl = function (url) {
-		var ids = url.split("?");
-		this.location = {
-			href: url,
-			pathname: ids.shift(),
-			query: ids.length == 0 ? "" : ids.join("?"),
-			goto: this.goto.bind(this)
-		};
+		return obj;
 	};
 
 	module.exports = Context;

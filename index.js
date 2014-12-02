@@ -6,10 +6,18 @@ define(function(require, exports, module) {
 
 	var $ = require("jquery");
 	var History = require("./history");
-	var Cookie = require("./cookie");
 	var Context = require("./context");
+	var querystring = require("./util/querystring");
 
-	var single;
+	/**
+	 * 事件对象
+	 * @param type
+	 * @constructor
+	 */
+	var Event = function(type) {
+		this.type = type;
+		this.data = {};
+	};
 
 	/**
 	 * Bigbox类
@@ -18,12 +26,21 @@ define(function(require, exports, module) {
 	var Bigbox = function(config) {
 		this._config = config;
 
-		// 读取当前页面的路径信息
-		this.contexts = {};
-		this._setBoxes(window.boxesID);
-
 		// 记录当前使用的样式信息
 		this._cssRes = {};
+
+		// 事件监听器
+		this._listeners = {};
+
+		// 读取当前页面的路径信息
+		this._boxesID = [];
+		this.contexts = [];
+		this._setBoxes(window.boxesID);
+
+		// 把当前的boxesID存下来
+		history.replaceState({
+			boxesID: this._boxesID
+		}, document.title);
 
 		// 服务器处理程序列表
 		this._uses = false;
@@ -48,20 +65,45 @@ define(function(require, exports, module) {
 	};
 
 	/**
-	 * 重新读取context的信息
-	 * @param oldBoxID
+	 * 监听事件
+	 * @param name
+	 * @param listener
 	 */
-	Bigbox.prototype.reloadContext = function(oldBoxID) {
-		var context = this.contexts[oldBoxID];
-		var newBoxID = context.location.href;
+	Bigbox.prototype.on = function(name, listener) {
+		var listeners = this._listeners[name] || (this._listeners[name] = []);
+		listeners.push(listener);
+	};
 
-		// 修改context信息
-		delete this.contexts[oldBoxID];
-		this.contexts[newBoxID] = context;
+	/**
+	 * 取消事件监听
+	 * @param name
+	 * @param listener
+	 */
+	Bigbox.prototype.off = function(name, listener) {
+		var listeners = this._listeners[name];
+		if (!listeners) return;
 
-		// 更新数组中的信息
-		var index = this._boxesID.indexOf(oldBoxID);
-		this._boxesID.splice(index, 1, newBoxID);
+		// 监听事件
+		var index = listeners.indexOf(listener);
+		if (index != -1) this._listeners[name] = listeners.splice(index, 1);
+	};
+
+	/**
+	 * 触发事件
+	 * @param event
+	 * @returns {boolean}
+	 */
+	Bigbox.prototype.fire = function(event) {
+		var name = event.type;
+		var listeners = this._listeners[name];
+		if (!listeners) return;
+
+		// 循环每个监听器，并执行之
+		for (var i = 0, il = listeners.length; i < il; i++) {
+			var listener = listeners[i];
+			if (listener(event) === false) return false;
+		}
+		return true;
 	};
 
 	/**
@@ -70,14 +112,35 @@ define(function(require, exports, module) {
 	 * @private
 	 */
 	Bigbox.prototype._setBoxes = function(boxesID, changeIndex) {
-		this._boxesID = boxesID;
+		var nowBoxesID = this._boxesID;
+		var contexts = this.contexts;
 
+		// 删除不需要的contexts
+		if (typeof changeIndex == "number" && nowBoxesID.length > changeIndex) {
+			for (var i = nowBoxesID.length - 1; i >= changeIndex; i--) {
+				var boxID = nowBoxesID[i];
+				delete contexts[boxID];
+			}
+			contexts.length = changeIndex;
+
+			// 替换之前信息
+			for (var i = 0; i < changeIndex; i++) {
+				if (nowBoxesID[i] != boxesID[i]) {
+					contexts[boxesID[i]] = contexts[nowBoxesID[i]];
+					delete contexts[nowBoxesID[i]];
+				}
+			}
+		}
+
+		// 追加新的
 		for (var i = (typeof changeIndex == "number" ? changeIndex : 0),
 				 il = boxesID.length; i < il; i++
 		) {
 			var boxID = boxesID[i];
-			this.contexts[boxID] = new Context(boxID, this);
+			contexts.push(contexts[boxID] = new Context(boxID));
 		}
+
+		this._boxesID = boxesID;
 	};
 
 	/**
@@ -112,8 +175,31 @@ define(function(require, exports, module) {
 	 * @param event
 	 */
 	Bigbox.prototype.onHistoryPopState = function(event) {
-		var uri = location.pathname + location.search;
-		this.goto(uri, true);
+		// 获取当前页面的状态，如果有需要预先处理的，那就处理之
+		var state = history.state;
+		var boxesID;
+		if (!!state && (boxesID = state.boxesID)) {
+			var contexts = this.contexts;
+
+			// 循环所有的boxesID，如果存在对应的参数处理方法，那就调用之
+			for (var i = 0, il = Math.min(boxesID.length, contexts.length); i < il; i++) {
+				// 如果context不存在onparamschange方法，那就忽略
+				var nowContext = contexts[i];
+				if (typeof nowContext.onparamschange != "function") continue;
+
+				// 如果路径不同，也就是说不是同一个controller，那也忽略
+				var boxID = boxesID[i];
+				var newContext = Context.parse(boxID);
+				if (newContext.pathname != nowContext.pathname) continue;
+
+				// 那就设置新的参数，以及
+				nowContext.params = newContext.params;
+				nowContext.onparamschange();
+			}
+		}
+
+		var uri = parseUrl(location.href);
+		this.goto(uri.pathname + uri.search, true);
 	};
 
 	/**
@@ -152,11 +238,12 @@ define(function(require, exports, module) {
 		// 设置浏览器加载状态
 		document.body.style.cursor = "wait";
 
-		// 拿到原来的boxes，构成新的url
-		var boxesID =  [];
-		this._boxesID.forEach(function(boxID) {
-			boxesID.push(this.contexts[boxID].location.href);
-		}, this);
+		// 遍历当前的contexts，拼接成新的boxesID
+		var boxesID = [];
+		this.contexts.forEach(function(context) {
+			var query = querystring.stringify(context.params);
+			boxesID.push(context.pathname + (query.length > 0 ? ("?" + query) : ""));
+		});
 
 		// 获取请求信息
 		var originalUrl = this._config.api;
@@ -175,35 +262,20 @@ define(function(require, exports, module) {
 			}, notPush2History);
 		}).bind(this);
 
-		// 判断是否有拦截程序要进行预处理
-		var uses = this._uses;
-		if (uses) {
-			for (var i = 0, il = uses.length; i < il; i++) {
-				var use = uses[i];
-				if (path.indexOf(use.path) == 0) {
-					// 匹配相应的模式，调用之
-					var req = {
-						originalUrl: originalUrl,
-						query: query,
-						cookies: Cookie.all()
-					};
-					var res = {
-						json: callback
-					};
-					setTimeout(function() {
-						use.deal(req, res);
-					}, 0);
-					return;
-				}
-			}
-		}
-
-		// 如果之前没有拦截到，那就调用ajax请求服务器
-		$.ajax({
+		var event = new Event("beforerequest");
+		event.data = {
 			url: originalUrl,
 			data: query,
-			dataType: "json"
-		}).done(callback);
+			callback: callback
+		};
+		if (this.fire(event) !== false) {
+			// 如果之前没有拦截到，那就调用ajax请求服务器
+			$.ajax({
+				url: originalUrl,
+				data: query,
+				dataType: "json"
+			}).done(callback);
+		}
 	};
 
 	/**
@@ -256,7 +328,7 @@ define(function(require, exports, module) {
 		this.addResource(content.head.resources, nowBoxesID);
 
 		// 更换内容
-		$("#BigBoxCtr" + changeIndex).html(content.body.content);
+		$("#BigboxCtr" + changeIndex).html(content.body.content);
 
 		// 增加内容部分的资源
 		this.addResource(content.body.resources, nowBoxesID);
@@ -320,7 +392,9 @@ define(function(require, exports, module) {
 		this._setBoxes(nowBoxesID, changeIndex);
 
 		// 变更history
-		!notPush2History && History.push(uri);
+		!notPush2History && History.push(uri, {
+			boxesID: this._boxesID
+		});
 	};
 
 	/**
@@ -335,6 +409,22 @@ define(function(require, exports, module) {
 			deal: deal
 		});
 	};
+
+	/**
+	 * 解析url信息
+	 * @param url
+	 * @returns {{pathname: (*|Context.location.pathname|boxReq.pathname|pathname|info.pathname|string), search: (*|Translater.search|Function|string|search|$.search)}}
+	 */
+	function parseUrl(url) {
+		var a = document.createElement("a");
+		a.href = url;
+		return {
+			pathname: a.pathname,
+			search: a.search
+		};
+	}
+
+	var single;
 
 	/**
 	 * 启动代码

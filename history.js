@@ -8,8 +8,8 @@ define(function(require, exports, module) {
 	 * 往历史中增加一个uri
 	 * @param uri
 	 */
-	exports.push = function(uri) {
-		history.pushState(null, null, uri);
+	exports.push = function(uri, data) {
+		history.pushState(data || null, null, uri);
 	};
 
 	/**
